@@ -6,11 +6,21 @@ import (
 	"fmt"
 	"io"
 	"bufio"
+	"strings"
 	"encoding/csv"
 	"github.com/cloudflare/ahocorasick"
+	"github.com/deckarep/golang-set"
 )
 
-func createKeywordDictionaryFromCSVFile(f *os.File) map[string]string {
+func createKeywordDictionaryFromCSVFile(name string) map[string]string {
+	f, err := os.Open(name)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer f.Close()
+
 	// Create a new reader.
 	r := csv.NewReader(bufio.NewReader(f))
 	m := make(map[string]string)
@@ -24,10 +34,39 @@ func createKeywordDictionaryFromCSVFile(f *os.File) map[string]string {
 
 		// Display record.
 		//fmt.Printf("%v	%v\n", record[0], record[1])
-		m[record[0]] = record[1]
+		// Map the keyword to the category word...
+		m[strings.ToLower(record[0])] = strings.ToLower(record[1])
+		// Map the category word too...
+		m[strings.ToLower(record[1])] = strings.ToLower(record[1])
 	}
 
 	return m
+}
+
+func createListFromCSVFile(name string) []string {
+	f, err := os.Open(name)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer f.Close()
+
+	// Create a new reader.
+	r := csv.NewReader(bufio.NewReader(f))
+	a := make([]string, 0)
+	for {
+		record, err := r.Read()
+
+		// Stop at EOF.
+		if err == io.EOF {
+			break
+		}
+
+		a = append(a, record[0])
+	}
+
+	return a
 }
 
 func getKeys(m map[string]string) []string {
@@ -41,21 +80,35 @@ func getKeys(m map[string]string) []string {
 	return keys
 }
 
-func main() {
-	f, err := os.Open("./data/keywords.csv")
+func getKeywords(m map[string]string) []string {
+	return getKeys(m)
+}
 
-	if err != nil {
-		log.Fatal(err)
+func getUniqueCategoriesFromHits(hits []int, keywords []string, dict map[string]string) []interface{} {
+	set := mapset.NewSet()
+	for _, v := range hits {
+		set.Add(dict[keywords[v]])
 	}
 
-	defer f.Close()
+	return set.ToSlice()
+}
 
-	dict := createKeywordDictionaryFromCSVFile(f)
-	keywords := getKeys(dict)
+func main() {
+	// Load urls...
+	urls := createListFromCSVFile("./data/newurls.csv")
+
+	// Load keywords...
+	dict := createKeywordDictionaryFromCSVFile("./data/keywords.csv")
+
+	// Classify...
+	keywords := getKeywords(dict)
 	m := ahocorasick.NewStringMatcher(keywords)
-	hits := m.Match([]byte("http://www.adoreme.com/bras-and-panties.html"))
-	fmt.Printf("# of hits: %d\n", len(hits))
-	for _, v := range hits {
-		fmt.Printf("%d %s\n", v, keywords[v])
+	for _, url := range urls {
+		hits := m.Match([]byte(strings.ToLower(url)))
+		//fmt.Printf("# of hits for %s: %d\n", url, len(hits))
+		categories := getUniqueCategoriesFromHits(hits, keywords, dict)
+		for _, v := range categories {
+			fmt.Printf("%s,%s\n", url, v)
+		}
 	}
 }
